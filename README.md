@@ -3,9 +3,10 @@
 ### Структура репозитория
 
 Внутри `src` расположены папки:
-- `/src/py` - код spark streaming для чтения данных из топика и записи в staging-слой Vertica: `1_data_import.py`.
-- `/src/dags` DAG, который обновляет витрину данных: `2_datamart_update.py`.
-- `/src/sql` - SQL-запрос создания таблиц в `STAGING`- и `DWH`-слоях
+
+- `/src/dags` DAG, который сначала стримит данные из Kafka в staging, а потом обновляет витрину данных: `datamart_update.py`.
+- `/src/sql` - SQL-запросы создания таблиц в `STAGING`- и `DWH`-слоях
+- `/src/dags/py` - функции для чтения данных из топика и записи в staging-слой Vertica: `spark_func`.
 - `/src/dags/sql` - SQL-запрос для обновления итоговой витрины.
 - `/src/img` - скриншот дашборда.
 
@@ -90,7 +91,10 @@ kafkacat -b rc1a-1im2demdsu72o02i.mdb.yandexcloud.net:9091\
 1) В схеме STAGING заведём таблицы `transactions` и `currencies`:\
 */src/sql/create_staging.sql*
 
-2) В схеме DWH заведём витрину `global_metrics`:\
+2) Создадим проекции для стейджинговых таблиц:\
+*/src/sql/create_staging_projections.sql*
+
+3) В схеме DWH заведём витрину `global_metrics`:\
 */src/dags/sql/create_dwh.sql*
 
 Значения полей в витрине:
@@ -102,10 +106,12 @@ kafkacat -b rc1a-1im2demdsu72o02i.mdb.yandexcloud.net:9091\
 * cnt_accounts_make_transactions — количество уникальных аккаунтов с совершёнными транзакциями по валюте.
 
 ## Шаг 3. Spark Streaming из Kafka в stagging слой в Vertica:
-*/src/py/1_data_import.py*
+*/src/dags/py/spark_func.py.py* - заготовки функций
+
+*/src/dags/datamart_update.py* - настроим стриминг первым таском в DAG 
 
 ## Шаг 4. Пайплайн обновления витрины данных в Airflow
-1) В Airflow заведём Connection со следующими настройками:
+1) В Airflow заведём Connections со следующими настройками:
 ```
 Connection Id   VERTICA_CONN
 Connrction Type Generic
@@ -116,8 +122,18 @@ Extra           {"host": "51.250.75.20",
                  "database": "dwh"}
 
 ```
-2) Напишем DAG, который на ежедневной основе будет рассчитывать и догружать метрики в витрину:\
-*/src/dags/2_datamart_update.py*\
+
+```
+Connection Id   KAFKA_CONN
+Connrction Type Generic
+Extra           {"kafka.bootstrap.servers": "rc1a-1im2demdsu72o02i.mdb.yandexcloud.net:9091",
+                 "kafka.security.protocol": "SASL_SSL",
+                 "kafka.sasl.mechanism": "SCRAM-SHA-512",
+                 "kafka.sasl.jaas.config": "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"producer_consumer\" password=\"cactusL2345\";"}
+
+```
+2) Добавим в DAG 2-й таск, который на ежедневной основе будет рассчитывать и догружать метрики в витрину:\
+*/src/dags/datamart_update.py*\
 \
 DAG просто по расписанию выполняет SQL-запрос:\
 */src/dags/sql/mart_query_daily.sql*
